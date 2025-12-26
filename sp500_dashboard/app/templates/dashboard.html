@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SP500 Trading Dashboard 🚀</title>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <link href="/static/style.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header Premium -->
+        <header>
+            <h1><i class="fas fa-chart-line"></i> SP500 Trading Dashboard</h1>
+            <p>Datos en tiempo real • Predicciones IA • <span id="last-update"></span></p>
+        </header>
+
+        <!-- Stats -->
+        <div class="stats-grid" id="stats-grid">
+            <div class="stat-card">
+                <h3><i class="fas fa-building"></i> Empresas</h3>
+                <div id="companies-count">-</div>
+            </div>
+            <div class="stat-card">
+                <h3><i class="fas fa-dollar-sign"></i> Precios</h3>
+                <div id="prices-count">-</div>
+            </div>
+            <div class="stat-card">
+                <h3><i class="fas fa-bolt"></i> Señales</h3>
+                <div id="signals-count">-</div>
+            </div>
+        </div>
+
+        <!-- Chart Interactivo -->
+        <div class="chart-section">
+            <div class="chart-header">
+                <div class="chart-header">
+                    <h3><i class="fas fa-chart-candlestick"></i> <span id="chart-title">AAPL</span></h3>
+                    
+                    <!-- Selector optimizado -->
+                    <div class="selector-group">
+                        <select id="ticker-select" style="width: 300px;">
+                            <option value="AAPL">AAPL - Apple (Cargando todas...)</option>
+                        </select>
+                        <button onclick="loadAllTickers()" title="Cargar todas las empresas">
+                            <i class="fas fa-sync-alt"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <button onclick="loadAllCompanies()" style="background: #667eea; border: none; padding: 12px 24px; border-radius: 12px; color: white; cursor: pointer;">
+                    <i class="fas fa-list"></i> Todas
+                </button>
+            </div>
+            <div id="price-chart" style="height: 500px;">Cargando gráfico...</div>
+        </div>
+
+        <!-- Señales Trading -->
+        <div class="signals-section">
+            <div class="signals-grid">
+                <div class="signals-card">
+                    <h4><i class="fas fa-arrow-up"></i> TOP BUYS</h4>
+                    <div id="top-buys">Cargando señales...</div>
+                </div>
+                <div class="signals-card">
+                    <h4><i class="fas fa-arrow-down"></i> TOP SELLS</h4>
+                    <div id="top-sells">Cargando señales...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TODAS las empresas -->
+        <div class="companies-section">
+            <div class="companies-table">
+                <div class="table-header">
+                    <div>Ticker</div>
+                    <div>Empresa</div>
+                    <div>Sector</div>
+                    <div>Último Precio</div>
+                    <div>Score</div>
+                </div>
+                <div id="companies-table">Cargando empresas...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentTicker = 'AAPL';
+        let allCompanies = [];
+
+        // Carga inicial
+        window.onload = async () => {
+            await Promise.all([
+                loadStats(), 
+                loadSignals(), 
+                loadCompaniesTable(),
+                loadChart(currentTicker)
+            ]);
+            document.getElementById('last-update').textContent = new Date().toLocaleString();
+        };
+
+        // Event listeners
+        document.getElementById('ticker-select').addEventListener('change', function() {
+            currentTicker = this.value;
+            document.getElementById('chart-title').textContent = currentTicker;
+            loadChart(currentTicker);
+        });
+
+        async function loadStats() {
+            try {
+                const res = await fetch('/api/signals/stats');
+                const stats = await res.json();
+                document.getElementById('companies-count').textContent = stats.companies || 0;
+                document.getElementById('prices-count').textContent = stats.prices?.toLocaleString() || 0;
+                document.getElementById('signals-count').textContent = stats.signals || 0;
+            } catch(e) { /* fallback */ }
+        }
+
+        async function loadSignals() {
+            try {
+                const res = await fetch('/api/signals/top?limit=5');
+                const data = await res.json();
+                document.getElementById('top-buys').innerHTML = data.top_buys.map(s => 
+                    `<div class="signal buy">${s.ticker} <span>${s.score.toFixed(3)}</span></div>`
+                ).join('') || '<div class="no-data">Sin señales</div>';
+                document.getElementById('top-sells').innerHTML = data.top_sells.map(s => 
+                    `<div class="signal sell">${s.ticker} <span>${s.score.toFixed(3)}</span></div>`
+                ).join('') || '<div class="no-data">Sin señales</div>';
+            } catch(e) { /* fallback */ }
+        }
+
+        async function loadCompaniesTable() {
+            try {
+                const res = await fetch('/api/companies/?limit=50');
+                const companies = await res.json();
+                allCompanies = companies;
+                
+                document.getElementById('companies-table').innerHTML = companies.map(c => `
+                    <div class="table-row" onclick="loadChart('${c.ticker}')">
+                        <div><strong>${c.ticker}</strong></div>
+                        <div>${c.name}</div>
+                        <div>${c.sector || '-'}</div>
+                        <div>$ -</div>
+                        <div>${c.score?.toFixed(3) || '-'}</div>
+                    </div>
+                `).join('');
+            } catch(e) {
+                document.getElementById('companies-table').innerHTML = '<div class="no-data">Cargando empresas...</div>';
+            }
+        }
+
+        async function loadChart(ticker) {
+            try {
+                document.getElementById('price-chart').innerHTML = 'Cargando...';
+                const res = await fetch(`/api/charts/${ticker}`);
+                const data = await res.json();
+                if (data.chart) {
+                    Plotly.newPlot('price-chart', JSON.parse(data.chart).data, JSON.parse(data.chart).layout);
+                }
+            } catch(e) {
+                document.getElementById('price-chart').innerHTML = 'Sin datos disponibles';
+            }
+        }
+
+        async function loadAllCompanies() {
+            const res = await fetch('/api/companies/?limit=100');
+            const companies = await res.json();
+            // Mostrar modal o filtrar tabla
+            console.log('Todas las empresas:', companies);
+        }
+
+            let allTickers = [];
+
+            // Cargar TODOS los tickers para selector
+            async function loadAllTickers() {
+                try {
+                    document.getElementById('ticker-select').innerHTML = '<option>Cargando 501 empresas...</option>';
+                    
+                    const res = await fetch('/api/companies/tickers');
+                    allTickers = await res.json();
+                    
+                    const select = document.getElementById('ticker-select');
+                    select.innerHTML = '<option value="">Selecciona empresa...</option>';
+                    
+                    allTickers.forEach(ticker => {
+                        const option = new Option(ticker.label, ticker.value);
+                        select.appendChild(option);
+                    });
+                    
+                    console.log(`✅ Cargadas ${allTickers.length} empresas`);
+                } catch(e) {
+                    console.error('Error cargando tickers:', e);
+                    document.getElementById('ticker-select').innerHTML = '<option>Error cargando</option>';
+                }
+            }
+
+            // Auto-cargar al iniciar
+            window.onload = async () => {
+                await Promise.all([
+                    loadStats(), 
+                    loadSignals(), 
+                    loadCompaniesTable(),
+                    loadAllTickers(),
+                    loadChart('AAPL')
+                ]);
+                document.getElementById('last-update').textContent = new Date().toLocaleString();
+            };
+
+            // Event listener selector
+            document.getElementById('ticker-select').addEventListener('change', function() {
+                if (this.value) {
+                    currentTicker = this.value;
+                    document.getElementById('chart-title').textContent = currentTicker;
+                    loadChart(currentTicker);
+                }
+            });
+
+    </script>
+</body>
+</html>
