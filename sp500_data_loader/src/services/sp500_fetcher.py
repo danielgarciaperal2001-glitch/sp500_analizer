@@ -46,16 +46,16 @@ class SP500Fetcher:
         
         result = {}
         
-        for i, ticker in enumerate(tickers):  # 100 tickers para velocidad
+        for i, ticker in enumerate(tickers):
             try:
                 # Stooq CSV directo (US stocks: us/d/)
                 url = f"http://stooq.com/q/d/l/?s={ticker.lower()}.us&i=d"
                 
-                response = self.session.get(url, timeout=10)
+                response = self.session.get(url, timeout=100)
                 response.raise_for_status()
                 
                 df = pd.read_csv(StringIO(response.text))
-                
+                print(df)
                 if len(df) > 10 and 'Date' in df.columns:  # Datos válidos
                     df['Date'] = pd.to_datetime(df['Date'])
                     df = df.rename(columns={
@@ -70,11 +70,11 @@ class SP500Fetcher:
                         result[ticker] = df[['Open', 'High', 'Low', 'Close', 'Volume']]
                         logger.info(f"✅ {ticker}: {len(df)} días REALES (Stooq)")
                 
-                time.sleep(0.3)  # Rate limit suave
+                time.sleep(0.3)
                 
             except Exception as e:
                 logger.warning(f"⚠️ Stooq {ticker}: {str(e)[:40]}")
                 continue
         
-        logger.info(f"✅ Stooq: {len([t for t in result if not result[t].empty])}/100 REALES")
+        logger.info(f"✅ Stooq: {len([t for t in result if not result[t].empty])}/501 REALES")
         return result
