@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from ..models.sp500 import Company, DailyPrice
-from ..services.sp500_fetcher import SP500Fetcher
+from ..services.sp500_fetcher import MultiSourceFetcher
 import pandas as pd
 from typing import List
 import logging
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class SP500DataLoader:
     def __init__(self, db: Session):
         self.db = db
-        self.fetcher = SP500Fetcher()
+        self.fetcher = MultiSourceFetcher() 
     
     def create_schema(self):
         """Crea el esquema si no existe"""
@@ -119,4 +119,61 @@ class SP500DataLoader:
         logger.info(f"✅ Total precios guardados: {total_prices:,}")
         if failed_tickers:
             logger.warning(f"⚠️ Sin datos: {len(failed_tickers)} tickers")
+            
+    def load_historical_prices_incremental(self, days_back: int = 7):
+        """🔄 CARGA INCREMENTAL: Solo NUEVOS días por ticker"""
+        companies = self.db.query(Company).filter(Company.is_active == True).all()
+        
+        logger.info(f"🔄 Incremental: {len(companies)} tickers (últimos {days_back} días)")
+        all_data = self.fetcher.download_historical_data(
+            [c.ticker for c in companies], 
+            days_back=days_back * 2  # Buffer para solapamiento
+        )
+        
+        total_new_prices = 0
+        
+        for company in companies:
+            ticker = company.ticker
+            
+            if ticker in all_data and not all_data[ticker].empty:
+                prices_df = all_data[ticker]
+                
+                # Fecha MÁS RECIENTE en DB para este ticker
+                last_date_db = self.db.query(
+                    func.max(DailyPrice.price_date)
+                ).filter(DailyPrice.company_id == company.id).scalar()
+                
+                new_prices = []
+                for date, row in prices_df.iterrows():
+                    price_date = date.date() if hasattr(date, 'date') else date
+                    
+                    # Solo si es NUEVO (después de última fecha DB)
+                    if last_date_db is None or price_date > last_date_db:
+                        existing = self.db.query(DailyPrice).filter(
+                            DailyPrice.company_id == company.id,
+                            DailyPrice.price_date == price_date
+                        ).first()
+                        
+                        if not existing:
+                            price = DailyPrice(
+                                company_id=company.id,
+                                price_date=price_date,
+                                open=float(row['Open']) if pd.notna(row['Open']) else None,
+                                high=float(row['High']) if pd.notna(row['High']) else None,
+                                low=float(row['Low']) if pd.notna(row['Low']) else None,
+                                close=float(row['Close']) if pd.notna(row['Close']) else None,
+                                volume=int(row['Volume']) if pd.notna(row['Volume']) else None
+                            )
+                            new_prices.append(price)
+                
+                if new_prices:
+                    self.db.add_all(new_prices)
+                    total_new_prices += len(new_prices)
+                    logger.info(f"💾 {ticker}: +{len(new_prices)} nuevos días (desde {last_date_db or 'inicio'})")
+            
+            self.db.commit()  # Commit por ticker (seguridad)
+        
+        logger.info(f"✅ Incremental completado: {total_new_prices:,} nuevos precios")
+        return total_new_prices
+
 

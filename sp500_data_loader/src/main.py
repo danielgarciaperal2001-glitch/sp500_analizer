@@ -1,58 +1,119 @@
 import logging
+import sys
+import traceback
+from pathlib import Path
+from .models.predictions import BacktestResult  
+from .models.predictions import PortfolioRecommendation
+
+# Database
 from .core.database import get_db, engine, Base
+
+# Models (IMPORTAR AQUÍ)
+from .models.sp500 import Company, DailyPrice
+from .models.predictions import TechnicalIndicator, TradingSignal, MLPrediction
+
+# Services
 from .services.data_loader import SP500DataLoader
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# SQLAlchemy
+from sqlalchemy.orm import Session
+from sqlalchemy import text, func
+
+# Config logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 def create_all_tables():
-    """✅ CREA TODAS LAS TABLAS ANTES de cualquier uso"""
-    logger.info("📊 Creando TODAS las tablas...")
-    
-    # Importar TODOS los models para registrar tablas
-    from .models.sp500 import Company, DailyPrice
-    from .models.predictions import TechnicalIndicator, TradingSignal
-    
+    """Crea TODAS las tablas"""
+    logger.info("📊 Creando esquema completo...")
     Base.metadata.create_all(bind=engine)
-    logger.info("✅ ✅ TABLAS CREADAS")
+    logger.info("✅ Tablas creadas")
 
-def main():
-    logger.info("🚀 SP500 Data Loader + PREDICCIONES")
-    
-    # ✅ 1. CREAR TABLAS PRIMERO
+def main(mode: str = "incremental"):
+    """incremental | full | ml_train"""
     create_all_tables()
     
     db = next(get_db())
     loader = SP500DataLoader(db)
     
     try:
-        # 2. Datos base
-        logger.info("🏢 Cargando empresas...")
+        # Actualizar empresas
+        logger.info("🏢 Actualizando empresas S&P500...")
         loader.load_companies()
         
-        logger.info("📈 Cargando precios...")
-        loader.load_historical_prices(days_back=365)
+        if mode == "full":
+            logger.info("🔥 MODO FULL: Carga 5 años")
+            loader.load_historical_prices(days_back=1825)
+            
+        elif mode == "incremental":
+            logger.info("🔄 MODO INCREMENTAL: 7 días nuevos")
+            loader.load_historical_prices_incremental(days_back=7)
+            
+        elif mode == "ml_train":
+            logger.info("🤖 MODO ML: Entrenar predicciones")
+            from .services.ml_predictor import MLPredictor
+            predictor = MLPredictor()
+            
+            # TOP 20 empresas con datos
+            companies = db.query(Company.id).join(
+                DailyPrice, Company.id == DailyPrice.company_id
+            ).group_by(Company.id).limit(20).all()
+            
+            for company_row in companies:
+                company_id = company_row[0]
+                predictor.train_predict(db, company_id)
+            
+            logger.info("✅ ML entrenado!")
+
+        # Añadir al bloque elif:
+        elif mode == "backtest":
+            logger.info("📊 MODO BACKTEST: Validar estrategia histórica")
+            from .services.backtester import Backtester
+            bt = Backtester()
+            results = bt.backtest_top_stocks(db, limit=20)
+            logger.info(f"✅ Backtest completado: {len(results)} empresas analizadas")
+
+        elif mode == "portfolio":
+            logger.info("💼 MODO PORTFOLIO: Kelly + Sharpe Optimizer")
+            from .services.portfolio_optimizer import PortfolioOptimizer
+            optimizer = PortfolioOptimizer()
+            recommendations = optimizer.optimize_portfolio(db, top_signals=20)
+            if recommendations:
+                logger.info(f"✅ Portfolio optimizado: {len(recommendations)} posiciones")
+            else:
+                logger.warning("⚠️ Sin datos suficientes para portfolio")
+
+                    
+        else:
+            logger.error(f"❌ Modo inválido: {mode}")
+            return
         
-        # 3. Predicciones
-        logger.info("🎯 Generando indicadores...")
-        from .services.predictions import generate_trading_signals, get_top_signals
-        signals = generate_trading_signals(db, 501)
+        # Stats finales
+        stats = db.execute(text("""
+            SELECT 
+                (SELECT COUNT(*) FROM companies WHERE is_active=1) as empresas,
+                (SELECT COUNT(*) FROM prices_daily) as precios,
+                COALESCE((SELECT COUNT(*) FROM technical_indicators), 0) as indicadores,
+                COALESCE((SELECT COUNT(*) FROM trading_signals), 0) as señales,
+                COALESCE((SELECT COUNT(*) FROM ml_predictions), 0) as ml_predicciones
+        """)).fetchone()
         
-        # 4. TOP 
-        top_signals = get_top_signals(db, len(signals))
-        logger.info(f"🏆 TOP {len(signals)}:")
-        print("\n" + "="*80)
-        for signal, company in top_signals:
-            action_emoji = "🟢" if signal.action == "BUY" else "🔴" if signal.action == "SELL" else "🟡"
-            print(f"{action_emoji} {signal.action:<6} {company.ticker:<8} {company.name:<35} Score: {signal.score:.3f}")
-        print("="*80)
+        logger.info(f"📊 ESTADO FINAL:")
+        logger.info(f"   🏢 Empresas: {stats[0]}")
+        logger.info(f"   💰 Precios: {stats[1]:,}")
+        logger.info(f"   📈 Indicadores: {stats[2]}")
+        logger.info(f"   🎯 Señales: {stats[3]}")
+        logger.info(f"   🤖 ML Predicciones: {stats[4]}")
         
     except Exception as e:
         logger.error(f"❌ Error: {str(e)}")
-        import traceback
         traceback.print_exc()
     finally:
         db.close()
 
 if __name__ == "__main__":
-    main()
+    mode = sys.argv[1] if len(sys.argv) > 1 else "incremental"
+    main(mode)

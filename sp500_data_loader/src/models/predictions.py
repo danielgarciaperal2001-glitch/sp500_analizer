@@ -1,7 +1,8 @@
-from sqlalchemy import Column, Integer, String, Date, DECIMAL, DATETIME, Boolean, ForeignKey, Index
+from sqlalchemy import Column, Integer, String, Date, DECIMAL, DATETIME, Boolean, ForeignKey, Index, JSON
 from sqlalchemy.orm import relationship
 from ..core.database import Base
 from sqlalchemy.sql import func
+from datetime import datetime
 
 class TechnicalIndicator(Base):
     __tablename__ = "technical_indicators"
@@ -49,3 +50,48 @@ class TradingSignal(Base):
     __table_args__ = (
         Index('idx_signal_company_date', 'company_id', 'signal_date'),
     )
+
+class MLPrediction(Base):
+    __tablename__ = "ml_predictions"
+    
+    id = Column(Integer, primary_key=True)
+    company_id = Column(Integer, ForeignKey("companies.id"))
+    prediction_date = Column(Date)
+    
+    # Predicciones ML
+    pred_price_1d = Column(DECIMAL(12,6))
+    pred_price_5d = Column(DECIMAL(12,6))
+    pred_price_20d = Column(DECIMAL(12,6))
+    
+    confidence_1d = Column(DECIMAL(5,3))  # 0-1
+    confidence_5d = Column(DECIMAL(5,3))
+    
+    accuracy_1d = Column(DECIMAL(5,3))  # Histórica
+    accuracy_5d = Column(DECIMAL(5,3))
+    
+    ml_score = Column(DECIMAL(5,3))  # 0-1 COMBINADO
+
+class BacktestResult(Base):
+    __tablename__ = "backtest_results"
+    
+    id = Column(Integer, primary_key=True)
+    strategy = Column(String(50))
+    company_id = Column(Integer, ForeignKey("companies.id"))
+    start_date = Column(Date)
+    end_date = Column(Date)
+    total_return = Column(DECIMAL(10,4))
+    sharpe_ratio = Column(DECIMAL(8,4))
+    max_drawdown = Column(DECIMAL(8,4))
+    win_rate = Column(DECIMAL(5,3))
+    total_trades = Column(Integer)
+    created_at = Column(DATETIME, default=datetime.utcnow)
+
+class PortfolioRecommendation(Base):
+    __tablename__ = "portfolio_recommendations"
+    
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DATETIME, default=datetime.utcnow)
+    total_recommended_positions = Column(Integer)
+    expected_sharpe = Column(DECIMAL(5,3))
+    kelly_fraction = Column(DECIMAL(5,3))
+    recommendations = Column(JSON)  # [{"ticker": "NVDA", "weight": 0.12}]
